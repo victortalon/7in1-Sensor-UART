@@ -1,0 +1,102 @@
+#include <Arduino.h>
+
+// UART Configuration
+const uint8_t UART_RX_PIN = 16;
+const uint32_t UART_BAUD_RATE = 9600;
+const size_t BUFFER_SIZE = 20;  // Fixed 20-byte buffer
+uint8_t rxBuffer[BUFFER_SIZE];
+
+// Timing Control
+const unsigned long DISPLAY_INTERVAL = 3000; // 3 seconds between displays
+const unsigned long PACKET_TIMEOUT = 500;    // 500ms byte timeout
+unsigned long lastDisplayTime = 0;
+
+void setup() {
+  Serial.begin(115200);
+  while (!Serial);
+  
+  Serial.println("\nSensor Data Monitor");
+  Serial.println("==================");
+  Serial.println("Displaying combined sensor values");
+  Serial.println("\nWaiting for data...\n");
+  
+  Serial2.begin(UART_BAUD_RATE, SERIAL_8N1, UART_RX_PIN, -1);
+}
+
+void displaySensorValues(const uint8_t* data, size_t length) {
+  if (length < 18) {
+    Serial.println("Incomplete packet - not enough bytes");
+    return;
+  }
+
+  Serial.println("\n=== SENSOR READINGS ===");
+  
+  // CO2 (B4-B5)
+  uint16_t co2 = (data[3] << 8) | data[4];
+  Serial.printf("CO2:        0x%04X  %5d ppm\n", co2, co2);
+  
+  // HCHO (B6-B7)
+  uint16_t hcho = (data[5] << 8) | data[6];
+  Serial.printf("HCHO:       0x%04X  %5d μg/m³\n", hcho, hcho);
+  
+  // TVOC (B8-B9)
+  uint16_t tvoc = (data[7] << 8) | data[8];
+  Serial.printf("TVOC:       0x%04X  %5d μg/m³\n", tvoc, tvoc);
+  
+  // PM2.5 (B10-B11)
+  uint16_t pm25 = (data[9] << 8) | data[10];
+  Serial.printf("PM2.5:      0x%04X  %5d μg/m³\n", pm25, pm25);
+  
+  // PM10 (B12-B13)
+  uint16_t pm10 = (data[11] << 8) | data[12];
+  Serial.printf("PM10:       0x%04X  %5d μg/m³\n", pm10, pm10);
+  
+  // Temperature (B14-B15)
+  uint16_t tempRaw = (data[13] << 8) | data[14];
+  float temperature = tempRaw / 10.0f;
+  Serial.printf("Temperature:0x%04X  %5.1f °C\n", tempRaw, temperature);
+  
+  // Humidity (B16-B17)
+  uint16_t humidityRaw = (data[15] << 8) | data[16];
+  float humidity = humidityRaw / 10.0f;
+  Serial.printf("Humidity:   0x%04X  %5.1f %%\n", humidityRaw, humidity);
+  
+  Serial.println("======================");
+}
+
+void loop() {
+  static uint8_t packet[BUFFER_SIZE];
+  static size_t packetLength = 0;
+  static uint32_t lastByteTime = 0;
+  
+  // Collect bytes with timeout
+  while (Serial2.available()) {
+    uint8_t byteRead = Serial2.read();
+    lastByteTime = millis();
+    
+    // Store byte if buffer has space
+    if (packetLength < BUFFER_SIZE) {
+      packet[packetLength++] = byteRead;
+    } else {
+      Serial.println("\n! Buffer full - displaying packet !");
+      displaySensorValues(packet, packetLength);
+      packetLength = 0;
+    }
+  }
+  
+  // Handle timeout
+  if (packetLength > 0 && millis() - lastByteTime > PACKET_TIMEOUT) {
+    Serial.println("\n--- Packet Timeout ---");
+    displaySensorValues(packet, packetLength);
+    packetLength = 0;
+  }
+  
+  // Display at fixed intervals when full packet received
+  if (packetLength == BUFFER_SIZE && millis() - lastDisplayTime >= DISPLAY_INTERVAL) {
+    displaySensorValues(packet, packetLength);
+    lastDisplayTime = millis();
+    packetLength = 0;
+  }
+  
+  delay(10);
+}
